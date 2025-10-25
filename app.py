@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import io
+import gdown
 
 # -------- CycleGAN Generator Definition -------- #
 
@@ -63,22 +64,53 @@ class Generator(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+# -------- Google Drive Download -------- #
+
+def download_from_gdrive(gdrive_url, output_path):
+    """Download file from Google Drive"""
+    try:
+        # Extract file ID from various Google Drive URL formats
+        if '/file/d/' in gdrive_url:
+            file_id = gdrive_url.split('/file/d/')[1].split('/')[0]
+        elif 'id=' in gdrive_url:
+            file_id = gdrive_url.split('id=')[1].split('&')[0]
+        else:
+            file_id = gdrive_url
+        
+        # Construct download URL
+        download_url = f'https://drive.google.com/uc?id={file_id}'
+        
+        # Download using gdown
+        gdown.download(download_url, output_path, quiet=False)
+        return True
+    except Exception as e:
+        st.error(f"Error downloading from Google Drive: {str(e)}")
+        return False
+
 # -------- Model Loading (Backend) -------- #
 
 @st.cache_resource()
-def load_generator_from_path(model_path, device='cpu'):
-    """Load generator from backend file path"""
-    if not os.path.exists(model_path):
-        st.error(f"Model file not found at: {model_path}")
-        st.stop()
+def load_generator_from_gdrive(gdrive_url, model_name="model.pth", device='cpu'):
+    """Download and load generator from Google Drive"""
+    model_path = model_name
     
+    # Download if not already present
+    if not os.path.exists(model_path):
+        st.info("Downloading model from Google Drive...")
+        with st.spinner("Downloading... This may take a few minutes."):
+            if not download_from_gdrive(gdrive_url, model_path):
+                st.error("Failed to download model!")
+                st.stop()
+        st.success("✓ Model downloaded successfully!")
+    
+    # Load model
     model = Generator()
     try:
         state_dict = torch.load(model_path, map_location=device)
         model.load_state_dict(state_dict)
         model.to(device)
         model.eval()
-        return model
+        return model, model_path
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
         st.stop()
@@ -103,8 +135,6 @@ def generate_anime_style(generator, input_image, device='cpu'):
     output_tensor = torch.clamp(output_tensor, 0, 1)
     
     # Convert to numpy for display
-
-
     output_np = output_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()
     
     return output_np, output_tensor
@@ -147,9 +177,12 @@ Convert your photos to anime style using CycleGAN!
 Upload an image and get an anime-styled version instantly.
 """)
 
-# -------- CONFIGURATION: Set your model path here -------- #
-MODEL_PATH = "netG_A2B_epoch_20 (1).pth"  # Change this to your model path
-# --------------------------------------------------------- #
+# -------- CONFIGURATION: Set your Google Drive link here -------- #
+# Share your .pth file on Google Drive with "Anyone with the link" permission
+# Then paste the link below
+GDRIVE_URL = "https://drive.google.com/file/d/1542Jk8Yra9ZmfZSIocEiJtn0s-fnsykt/view?usp=drive_link"
+MODEL_NAME = "netG.pth"
+# ----------------------------------------------------------------- #
 
 # Device selection
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -160,21 +193,30 @@ with st.sidebar:
     st.info("""
     This app uses a pre-trained CycleGAN model to convert 
     real photos into anime-style images.
+    
+    **Model is automatically downloaded from Google Drive on first run.**
     """)
     st.markdown(f"**Device:** `{device.upper()}`")
-    st.markdown(f"**Model:** `{os.path.basename(MODEL_PATH)}`")
+    st.markdown(f"**Model:** `{MODEL_NAME}`")
     
     if st.checkbox("Show Model Info"):
-        if os.path.exists(MODEL_PATH):
-            file_size = os.path.getsize(MODEL_PATH) / (1024 * 1024)
-            st.success(f"✓ Model loaded ({file_size:.2f} MB)")
+        if os.path.exists(MODEL_NAME):
+            file_size = os.path.getsize(MODEL_NAME) / (1024 * 1024)
+            st.success(f"✓ Model cached ({file_size:.2f} MB)")
         else:
-            st.error("✗ Model file not found!")
+            st.warning("⏳ Model will be downloaded on first use")
+    
+    # Manual re-download option
+    if st.button("🔄 Re-download Model"):
+        if os.path.exists(MODEL_NAME):
+            os.remove(MODEL_NAME)
+        st.cache_resource.clear()
+        st.rerun()
 
 # Load model (cached)
 with st.spinner("Loading model..."):
-    generator = load_generator_from_path(MODEL_PATH, device=device)
-    st.success("✓ Model loaded successfully!")
+    generator, model_path = load_generator_from_gdrive(GDRIVE_URL, MODEL_NAME, device=device)
+    st.success("✓ Model ready!")
 
 # File uploader
 uploaded_file = st.file_uploader(
@@ -236,13 +278,14 @@ else:
     # Optional: Show example
     with st.expander("📝 Tips for best results"):
         st.markdown("""
-        - Use clear, front-facing photos
-        - Images with faces work best
-        - Good lighting improves results
-        - The model works on 256x256 images
-        - Make sure u are a girl 
-        - Don't show your teeth
-        """)
+- Use clear, front-facing photos  
+- Images with faces work best  
+- Good lighting improves results  
+- The model works on 256x256 images  
+- Neutral expressions give better results  
+- Avoid extreme angles  
+- Prefer a girl image with open hair and no visible teeth
+""")
 
 # Footer
 st.markdown("---")
